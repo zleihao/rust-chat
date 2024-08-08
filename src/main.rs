@@ -16,8 +16,14 @@ fn handler(mut s: TcpStream) {
             }, 
         };
 
+        if ret <= 0 {
+            println!("{:?} disconnect", s.peer_addr());
+            let _ = s.shutdown(std::net::Shutdown::Both);
+            return;
+        }
+
         let _ = s.write(&buf[0..ret]);
-        std::io::stdout().write(&buf[0..ret]);
+        let _ = std::io::stdout().write(&buf[0..ret]);
     }
 }
 
@@ -30,9 +36,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Connect from {}", s.peer_addr()?);
                 let _ = s.write(STR);
 
-                std::thread::spawn(|| {
+                let tid = std::thread::spawn(|| {
                     handler(s);
                 });
+                let _ = tid.join();
             },
             Err(e) => println!("{e}"),
         }
