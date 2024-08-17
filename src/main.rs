@@ -6,6 +6,11 @@ mod server;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listen = TcpListener::bind(server::IP_PORT)?;
 
+    //启动服务器加载配置文件
+    if let Err(e) = server::start_init("./info.json") {
+        println!("{e}");
+    }
+
     for sfd in listen.incoming() {
         match sfd {
             Ok(mut s) => {

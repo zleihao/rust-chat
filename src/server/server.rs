@@ -4,16 +4,23 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::{LazyLock, Mutex};
 
-#[derive(Debug)]
-struct Info {
-    fd: TcpStream,
-    addr: io::Result<SocketAddr>,
+use serde::{Deserialize, Serialize};
+
+use crate::server::parse_json;
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct Info {
+    #[serde(skip_serializing, skip_deserializing)]
+    fd: Option<TcpStream>,
+    #[serde(skip_serializing, skip_deserializing)]
+    addr: Option<io::Result<SocketAddr>>,
     name: String,
     pass: String,
+    #[serde(skip_serializing, skip_deserializing)]
     state: bool, //是否在线
 }
 
-static mut CLIENT_INFO: LazyLock<Mutex<std::collections::HashMap<String, Info>>> =
+pub static mut CLIENT_INFO: LazyLock<Mutex<HashMap<String, Info>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 //欢迎语
@@ -36,6 +43,12 @@ pub fn handler(mut s: TcpStream) {
                 let mut mux = CLIENT_INFO.lock().unwrap();
                 if let Some(v) = mux.get_mut(&name) {
                     v.state = false;
+                    //将该用户的信息添加到本地json中
+                    if let Err(e) = parse_json::add_to_json_tail("./info.json", v.name.clone(), &v)
+                    {
+                        println!("{e}");
+                    }
+
                     println!("用户 {} 已断开聊天室的网", v.name);
                 }
             }
@@ -53,7 +66,7 @@ pub fn handler(mut s: TcpStream) {
                 if !ok.is_empty() {
                     name = ok
                 }
-            },
+            }
             Err(e) => {
                 let _ = s.write(e.as_bytes());
                 continue;
@@ -101,21 +114,19 @@ fn parse(mut fd: TcpStream, name: String, data: &str) -> anyhow::Result<String, 
             let _ = fd.write("登录成功\n".as_bytes());
             return Ok(parts[1].to_string());
         }
-        "#logout" => {
-            unsafe {
-                let mut mux = CLIENT_INFO.try_lock().unwrap();
-                if let Some(v) = mux.get_mut(&name) {
-                    if v.state {
-                        v.state = false;
-                        let _ = fd.write("注销成功\n".as_bytes());
-                    } else {
-                        return Err("你还未登录不需要注销\n".to_string());
-                    }
+        "#logout" => unsafe {
+            let mut mux = CLIENT_INFO.try_lock().unwrap();
+            if let Some(v) = mux.get_mut(&name) {
+                if v.state {
+                    v.state = false;
+                    let _ = fd.write("注销成功\n".as_bytes());
                 } else {
                     return Err("你还未登录不需要注销\n".to_string());
                 }
+            } else {
+                return Err("你还未登录不需要注销\n".to_string());
             }
-        }
+        },
         "#broadcast" | "#b" => {
             if len < 1 {
                 return Err("用法错误\n".to_string());
@@ -131,7 +142,8 @@ fn parse(mut fd: TcpStream, name: String, data: &str) -> anyhow::Result<String, 
                                         \r注册：\t    #setname <user name>\n\
                                         \r登录：\t    #login <user name> <pass>\n\
                                         \r注销：\t    #logout\n\
-                                        \r群聊：\t    #broadcast <string>\n\n".to_string();
+                                        \r群聊：\t    #broadcast <string>\n\n"
+                .to_string();
             let _ = fd.write_all(help_info.as_bytes());
         }
         _ => {
@@ -154,8 +166,8 @@ fn set_name(fd: TcpStream, buf: &Vec<&str>) -> anyhow::Result<(), String> {
             mux.insert(
                 buf[1].to_string(),
                 Info {
-                    fd: fd.try_clone().unwrap(),
-                    addr: fd.peer_addr(),
+                    fd: Some(fd.try_clone().unwrap()),
+                    addr: Some(fd.peer_addr()),
                     name: buf[1].to_string(),
                     pass: "123".to_string(),
                     state: false,
@@ -183,7 +195,7 @@ fn login(fd: TcpStream, buf: &Vec<&str>) -> anyhow::Result<(), String> {
             }
 
             v.state = true;
-            v.fd = fd.try_clone().unwrap();
+            v.fd = Some(fd.try_clone().unwrap());
             return Ok(());
         };
         //该昵称不存在，直接返回错误
@@ -196,13 +208,15 @@ fn broadcast(fd: TcpStream, name: String, buf: &Vec<&str>) {
     unsafe {
         let map = CLIENT_INFO.try_lock().unwrap();
         for (_, v) in &*map {
-            if v.fd.peer_addr().unwrap() == fd.peer_addr().unwrap() {
+            let fd = v.fd.as_ref().unwrap();
+
+            if fd.peer_addr().unwrap() == fd.peer_addr().unwrap() {
                 continue;
             }
             let msg = format!("From User {}: {}\n", name, buf[1..].join(" "));
             // 发送消息给所有在线的用户
             if v.state {
-                if let Err(e) = v.fd.try_clone().unwrap().write_all(msg.as_bytes()) {
+                if let Err(e) = fd.try_clone().unwrap().write_all(msg.as_bytes()) {
                     eprintln!("发送消息给 {} 失败: {}", v.name, e);
                 }
             }
