@@ -52,6 +52,8 @@ pub fn add_to_json_tail(path: &str, name: String, info: &Info) -> anyhow::Result
 
     if let Some(obj) = json_data.as_object_mut() {
         obj.insert(name, json!(info));
+    } else {
+        println!("Failed to modify the JSON object.");
     }
 
     // 4. 将更新后的数据结构序列化为 JSON 格式

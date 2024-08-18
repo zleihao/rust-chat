@@ -127,6 +127,18 @@ fn parse(mut fd: TcpStream, name: String, data: &str) -> anyhow::Result<String, 
                 return Err("你还未登录不需要注销\n".to_string());
             }
         },
+        "#changepass" => {
+            if len != 2 {
+                return Err("用法错误\n".to_string());
+            }
+            if name.is_empty() {
+                return Err("你还未登录，不可修改密码\n".to_string());
+            }
+            if let Err(e) = change_pass(name.clone(), &parts) {
+                return Err(e);
+            }
+            let _ = fd.write("密码修改成功...\n请使用新密码重新登录...\n".as_bytes());
+        }
         "#broadcast" | "#b" => {
             if len < 1 {
                 return Err("用法错误\n".to_string());
@@ -142,6 +154,7 @@ fn parse(mut fd: TcpStream, name: String, data: &str) -> anyhow::Result<String, 
                                         \r注册：\t    #setname <user name>\n\
                                         \r登录：\t    #login <user name> <pass>\n\
                                         \r注销：\t    #logout\n\
+                                        \r修改密码:   #changepass <old pass> <new pass>\n\
                                         \r群聊：\t    #broadcast <string>\n\n"
                 .to_string();
             let _ = fd.write_all(help_info.as_bytes());
@@ -187,7 +200,7 @@ fn login(fd: TcpStream, buf: &Vec<&str>) -> anyhow::Result<(), String> {
         let mut mux = CLIENT_INFO.lock().unwrap();
         if let Some(v) = mux.get_mut(&buf[1].to_string()) {
             if v.state {
-                return Err("该用户已经登录了....".to_string());
+                return Err("该用户已经登录了....\n".to_string());
             }
             //该昵称已存在，直接登录
             if v.pass != buf[2].to_string() {
@@ -203,6 +216,25 @@ fn login(fd: TcpStream, buf: &Vec<&str>) -> anyhow::Result<(), String> {
     }
 }
 
+//修改密码
+fn change_pass(name: String, buf: &Vec<&str>) -> anyhow::Result<(), String> {
+    unsafe {
+        let mut mux = CLIENT_INFO.try_lock().unwrap();
+        if let Some(v) = mux.get_mut(&name) {
+            if !v.state {
+                return Err("你还未登录，无法修改密码\n".to_string());
+            }
+            if v.pass != buf[1] {
+                return Err("旧密码不匹配...\n".to_string());
+            }
+            //密码修改成功后，退出该用户登录状态
+            v.pass = buf[2].to_string();
+            v.state = false;
+        }
+    }
+
+    Ok(())
+}
 //广播
 fn broadcast(fd: TcpStream, name: String, buf: &Vec<&str>) {
     unsafe {
